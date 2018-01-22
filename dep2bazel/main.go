@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"regexp"
@@ -80,55 +81,64 @@ func bazelName(importpath string) string {
 	return strings.NewReplacer("-", "_", ".", "_").Replace(name)
 }
 
-func githubTarball(url string, revision string) (*RemoteTarball, error) {
-
+func githubTarball(url_path string, revision string) (*RemoteTarball, error) {
 	tarball := fmt.Sprintf("%v.tar.gz", revision)
-	f, err := ioutil.TempFile("", "")
-	if err != nil {
-		return nil, err
-	}
-	filename := f.Name()
-	defer os.Remove(filename)
-
-	downloadURL := fmt.Sprintf("%v/archive/%v", url, tarball)
-	err = downloadFile(f, downloadURL)
-	if err != nil {
-		return nil, err
-	}
-	f.Close()
-
-	// Github tarballs have one top-level directory that we want to strip out.
-	// Determine the name of that directory by inspecting the tarball.
-	// Usually the directory name is just importname-revision, but we can't assume
-	// it since capitalization might differ.
-	b, err := ioutil.ReadFile(filename)
-	if err != nil {
-		return nil, err
-	}
-	gzf, err := gzip.NewReader(bytes.NewReader(b))
-	if err != nil {
-		return nil, err
-	}
-	tarReader := tar.NewReader(gzf)
-
-	// The root directory is the second entry in the tarball.
-	head, err := tarReader.Next()
-	if err != nil {
-		return nil, err
-	}
-	head, err = tarReader.Next()
-	if err != nil {
-		return nil, err
-	}
-	stripPrefix := head.Name
-
-	// Also compute checksum for the downloaded file.
-	// NOTE: Github checksums are not stable either, see e.g.
-	// https://github.com/bazelbuild/rules_go/issues/820
-	// https://github.com/kubernetes/kubernetes/issues/46443
+	downloadURL := fmt.Sprintf("%v/archive/%v", url_path, tarball)
 	sha := ""
+	stripPrefix := ""
+
 	if *checksum {
+		// SHA256 requested. Files will actually be downloaded
+		f, err := ioutil.TempFile("", "")
+		if err != nil {
+			return nil, err
+		}
+		filename := f.Name()
+		defer os.Remove(filename)
+
+		err = downloadFile(f, downloadURL)
+		if err != nil {
+			return nil, err
+		}
+		f.Close()
+
+		// Github tarballs have one top-level directory that we want to strip out.
+		// Determine the name of that directory by inspecting the tarball.
+		// Usually the directory name is just importname-revision, but we can't assume
+		// it since capitalization might differ.
+		b, err := ioutil.ReadFile(filename)
+		if err != nil {
+			return nil, err
+		}
+		gzf, err := gzip.NewReader(bytes.NewReader(b))
+		if err != nil {
+			return nil, err
+		}
+		tarReader := tar.NewReader(gzf)
+
+		// The root directory is the second entry in the tarball.
+		head, err := tarReader.Next()
+		if err != nil {
+			return nil, err
+		}
+		head, err = tarReader.Next()
+		if err != nil {
+			return nil, err
+		}
+		stripPrefix = head.Name
+
+		// Also compute checksum for the downloaded file.
+		// NOTE: Github checksums are not stable either, see e.g.
+		// https://github.com/bazelbuild/rules_go/issues/820
+		// https://github.com/kubernetes/kubernetes/issues/46443
 		sha = fmt.Sprintf("%x", sha256.Sum256(b))
+	} else {
+		// SHA256 not requested. Files won't be downloaded
+		u, _ := url.Parse(url_path)
+
+		parts := strings.Split(u.Path, "/")
+		project := parts[len(parts)-1]
+		stripPrefix = fmt.Sprintf("%s-%s", project, revision)
 	}
 
 	return &RemoteTarball{
