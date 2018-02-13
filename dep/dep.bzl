@@ -1,5 +1,9 @@
 """Import go dep dependencies into Bazel."""
 
+def timestamp(ctx):
+    # Importing datetime is a nightmare
+    return ctx.execute(['date']).stdout
+
 def executable_extension(ctx):
     extension = ""
     if ctx.os.name.startswith('windows'):
@@ -39,6 +43,7 @@ def _dep_import_impl(ctx):
         'GOROOT': str(go_tool.dirname.dirname),
         'GOPATH': str(ctx.path('')),
     }
+    print("{} Install dep2bazel from github.com/scele/rules_go_dep/dep2bazel with env {}".format(timestamp(ctx), env))
     result = env_execute(ctx, [go_tool, "install", "github.com/scele/rules_go_dep/dep2bazel"], environment = env)
     if result.return_code:
         fail("failed to build dep2bazel: {}".format(result.stderr))
@@ -48,6 +53,8 @@ def _dep_import_impl(ctx):
     if result.return_code:
         fail("Could not figure out workspace root: %s (%s)" % (result.stdout, result.stderr))
     workspace_root_path = result.stdout
+
+    print("{} Running dep2bazel in {} with prefix {}".format(timestamp(ctx), workspace_root_path, ctx.attr.prefix))
 
     result = ctx.execute([
         ctx.path("bin/dep2bazel"),
@@ -71,10 +78,13 @@ def _dep_import_impl(ctx):
     if result.return_code:
         fail("dep_import failed: %s (%s)" % (result.stdout, result.stderr))
 
+    print("{} dep2bazel completed successfully".format(timestamp(ctx)))
+
     ctx.execute(["rm", workspace_root_path + "/bazel-gopath"])
     ctx.execute(["ln", "-s", ctx.path("."), workspace_root_path + "/bazel-gopath"])
+    print("{} Removed {}. Linked to it".format(timestamp(ctx), workspace_root_path + "/bazel-gopath", ctx.path(".")))
     ctx.symlink(workspace_root_path + "/bazel-genfiles", "genfiles/src/" + ctx.attr.prefix)
-
+    print("{} Symlinked {} to {}".format(timestamp(ctx), workspace_root_path + "/bazel-genfiles", "genfiles/src/" + ctx.attr.prefix))
 
 dep_import = repository_rule(
     attrs = {
